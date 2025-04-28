@@ -9,6 +9,30 @@ from q_learning_agent import QLearningAgent
 from environment import Environment
 from robot import DifferentialDriveRobot, RobotPose
 
+def get_direction_index(robot_x, robot_y, goal_x, goal_y):
+    """
+    Compute the cardinal direction from the robot to the goal.
+    Returns:
+        0: South (down)
+        1: West (left)
+        2: North (up)
+        3: East (right)
+    """
+    dx = goal_x - robot_x
+    dy = goal_y - robot_y
+    angle = math.degrees(math.atan2(dy, dx))
+    # South: 45° to 135°
+    if 45 <= angle < 135:
+        return 0
+    # West: ≥135° or < -135°
+    elif angle >= 135 or angle < -135:
+        return 1
+    # North: -135° to -45°
+    elif -135 <= angle < -45:
+        return 2
+    # East: -45° to 45°
+    else:
+        return 3
 
 def run_episodes(
     episodes,
@@ -28,7 +52,8 @@ def run_episodes(
 ):
     """
     Core training loop: runs `episodes` episodes, returns trained QLearningAgent.
-    Tracks successes and failures and includes a "closer/further" feature in the state.
+    Tracks successes and failures and includes a directional feature and
+    goal-detection bits in the state.
     """
     # Setup environment and agent
     width, height = 1200, 800
@@ -62,8 +87,8 @@ def run_episodes(
     for ep in range(episodes):
         # Spawn robot at a random, truly collision-free location
         while True:
-            x     = random.uniform(0.1*width, 0.9*width)
-            y     = random.uniform(0.1*height, 0.9*height)
+            x = random.uniform(0.1*width, 0.9*width)
+            y = random.uniform(0.1*height, 0.9*height)
             theta = random.random() * 2*math.pi
             tmp_robot = DifferentialDriveRobot(env, x, y, theta)
             if not env.check_collision(tmp_robot.get_robot_pose(), tmp_robot.get_robot_radius()):
@@ -78,33 +103,35 @@ def run_episodes(
                 and not env.check_collision(RobotPose(gx, gy, 0), robot.get_robot_radius())):
                 break
 
-        # Set initial previous distance for the "closer/further" feature
-        prev_dist = math.hypot(robot.x - gx, robot.y - gy)
+        # Tell the environment about the goal so sensors will see it
+        env.set_goal(gx, gy, robot.get_robot_radius(), color=(255, 0, 0))
 
         for step in range(max_steps):
-            # Record previous position (for rotation penalty)
             prev_x, prev_y = robot.x, robot.y
 
-            # Sense
+            # Sense environment (now includes goal boundary)
             robot.sense()
-            L = robot.sensorLeft.latest_reading[0]
-            F = robot.sensorStraight.latest_reading[0]
-            R = robot.sensorRight.latest_reading[0]
+            L, L_color, _ = robot.sensorLeft.latest_reading
+            F, F_color, _ = robot.sensorStraight.latest_reading
+            R, R_color, _ = robot.sensorRight.latest_reading
 
-            # Compute current distance and closeness feature
+            # Binary flags: 1 if this beam hit the goal, else 0
+            L_goal = 1 if L_color == (255, 0, 0) else 0
+            F_goal = 1 if F_color == (255, 0, 0) else 0
+            R_goal = 1 if R_color == (255, 0, 0) else 0
+
+            # Compute current distance to goal
             curr_dist = math.hypot(robot.x - gx, robot.y - gy)
-            if curr_dist < prev_dist:
-                closeness = 1
-            elif curr_dist > prev_dist:
-                closeness = -1
-            else:
-                closeness = 0
 
-            # Form state: sensor buckets + closeness feature
+            # Directional feature
+            direction = get_direction_index(robot.x, robot.y, gx, gy)
+
+            # Discretize sensor distances
             sens_state = agent.discretize([L, F, R], max_distance)
-            state = sens_state + (closeness,)
+            # State now includes direction + three goal‐seen bits
+            state = sens_state + (direction, L_goal, F_goal, R_goal)
 
-            # ε-greedy with optional action_weights
+            # ε-greedy action selection (with optional weights)
             if random.random() < agent.epsilon:
                 if action_weights:
                     action = random.choices(actions, weights=action_weights, k=1)[0]
@@ -116,7 +143,7 @@ def run_episodes(
                 candidates = [a for a, q in zip(actions, qs) if q == max_q]
                 action = random.choice(candidates)
 
-            # Execute
+            # Execute chosen action
             if action == 'left':
                 robot.theta = (robot.theta + math.pi/2) % (2*math.pi)
             elif action == 'right':
@@ -137,31 +164,32 @@ def run_episodes(
             else:
                 reward, done = -1, False
 
-            # Penalty for in-place rotation
-            if not done and (robot.x == prev_x and robot.y == prev_y):
+            # Penalty for rotating in place
+            if not done and robot.x == prev_x and robot.y == prev_y:
                 reward -= 1
 
-            # Prepare next_state with updated closeness
+            # Encourage moving closer
             if new_dist < curr_dist:
-                next_closeness = 1
-                reward += 1  # Encourage moving closer
-            elif new_dist > curr_dist:
-                next_closeness = -1
-            else:
-                next_closeness = 0
-            L2 = robot.sensorLeft.latest_reading[0]
-            F2 = robot.sensorStraight.latest_reading[0]
-            R2 = robot.sensorRight.latest_reading[0]
-            sens_next = agent.discretize([L2, F2, R2], max_distance)
-            next_state = sens_next + (next_closeness,)
+                reward += 1
 
-            # Learn
+            # Prepare next_state with fresh sensor & goal flags
+            robot.sense()
+            L2, L2_color, _ = robot.sensorLeft.latest_reading
+            F2, F2_color, _ = robot.sensorStraight.latest_reading
+            R2, R2_color, _ = robot.sensorRight.latest_reading
+
+            L2_goal = 1 if L2_color == (255, 0, 0) else 0
+            F2_goal = 1 if F2_color == (255, 0, 0) else 0
+            R2_goal = 1 if R2_color == (255, 0, 0) else 0
+
+            sens_next = agent.discretize([L2, F2, R2], max_distance)
+            direction_next = get_direction_index(robot.x, robot.y, gx, gy)
+            next_state = sens_next + (direction_next, L2_goal, F2_goal, R2_goal)
+
+            # Q‐learning update
             agent.learn(state, action, reward, next_state)
 
-            # Update prev_dist
-            prev_dist = curr_dist
-
-            # Visualization
+            # Visualization (optional)
             if show_visual:
                 for ev in pygame.event.get():
                     if ev.type == pygame.QUIT:
@@ -169,14 +197,15 @@ def run_episodes(
                 screen.fill((0, 0, 0))
                 env.draw(screen)
                 robot.draw(screen)
-                pygame.draw.circle(screen, (255, 0, 0), (int(gx), int(gy)), int(robot.get_robot_radius()))
+                # draw goal as a filled circle
+                pygame.draw.circle(screen, (255, 0, 0), (int(gx), int(gy)), int(robot.get_robot_radius()), 0)
                 pygame.display.flip()
                 clock.tick(target_fps)
 
             if done:
                 break
 
-        # Record episode outcome
+        # Episode bookkeeping
         if done and reward > 0:
             success_count += 1
         else:
@@ -191,7 +220,7 @@ def run_episodes(
             agent.save(resume_path)
             print(f"Episode {ep+1}: Q-table overwritten to {resume_path}")
 
-    # Stats summary
+    # Summary
     total = success_count + failure_count
     success_rate = (success_count / total * 100) if total else 0.0
     print(f"Training completed: {success_count} successes, {failure_count} failures ({success_rate:.2f}% success rate)")
@@ -199,7 +228,6 @@ def run_episodes(
     if show_visual:
         pygame.quit()
     return agent
-
 
 def merge_q_tables(q_tables):
     """
@@ -221,14 +249,13 @@ def merge_q_tables(q_tables):
             merged[state][i] = merged[state][i] / counts[state][i] if counts[state][i] > 0 else 1.0
     return merged
 
-
 def train(
     episodes=1000,
     workers=1,
     max_steps=200,
     dt=0.5,
     max_distance=100,
-    state_bins=[5,5,5,3],
+    state_bins=[5, 5, 5, 4],  # sensor bins + direction bins
     alpha=0.1,
     gamma=0.9,
     epsilon=0.1,
@@ -243,7 +270,6 @@ def train(
     Entry point: runs single or parallel training.
     Prints overall success rate for single-worker mode.
     """
-
     pygame.mixer.init()
     beep_sound = pygame.mixer.Sound('beep.mp3')
 
@@ -307,19 +333,19 @@ def train(
 
 if __name__ == '__main__':
     train(
-        episodes=2000,
-        workers=12,
-        max_steps=1500,
+        episodes=10,
+        workers=1,
+        max_steps=1000,
         dt=0.5,
         max_distance=100,
-        state_bins=[5,5,5,3],  # sensor bins + closeness bins
-        alpha=0.2,
+        state_bins=[5, 5, 5, 4],
+        alpha=0.1,
         gamma=0.95,
-        epsilon=0.3,
-        action_weights=[0.1,0.1,0.8],
+        epsilon=0.2,
+        action_weights=[0.1, 0.1, 0.8],
         save_interval=None,
-        show_visual=False,
+        show_visual=True,
         speed_multiplier=1000,
         resume=True,
-        resume_path='q_table_closeness.pkl'
+        resume_path='q_table_direction.pkl'
     )
