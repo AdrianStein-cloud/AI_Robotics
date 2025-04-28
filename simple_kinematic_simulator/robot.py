@@ -1,7 +1,7 @@
 import pygame
 from numpy import cos, sin, pi
 
-from sensor import LidarSensor, SingleRayDistanceAndColorSensor
+from sensor import SingleRayDistanceAndColorSensor
 
 class DifferentialDriveRobot:
     def __init__(self, env, x, y, theta, axel_length=40, wheel_radius=10, max_motor_speed=2*pi, kinematic_timestep=0.01):
@@ -16,11 +16,11 @@ class DifferentialDriveRobot:
 
         self.collided = False
 
-        self.left_motor_speed  = 1 #rad/s
-        self.right_motor_speed = 1 #rad/s
+        self.left_motor_speed  = 0 #rad/s
+        self.right_motor_speed = 0 #rad/s
         #self.theta_noise_level = 0.01
 
-        self.lidar = LidarSensor(100)  # 8m range
+        self.sensor = SingleRayDistanceAndColorSensor(100, 0)
 
     def move(self, robot_timestep): # run the control algorithm here
         # simulate kinematics during one execution cycle of the robot
@@ -32,34 +32,8 @@ class DifferentialDriveRobot:
         # update sensors
         self.sense()
 
-        # Get LIDAR measurements
-        distances = self.lidar.get_distances()
-
-        # Simple obstacle avoidance using LIDAR data
-        front_angles = distances[350:] + distances[:10]  # -10° to +10°
-        left_angles = distances[60:120]  # 60° to 120°
-        right_angles = distances[240:300]  # 240° to 300°
-        
-        min_front = min(front_angles)
-        min_left = min(left_angles)
-        min_right = min(right_angles)
-        
-        base_speed = 10.0
-        
-        if min_front < 100:  # Object closer than 1m in front
-            if min_left < min_right:
-                # Turn right
-                self.left_motor_speed = base_speed
-                self.right_motor_speed = -base_speed
-            else:
-                # Turn left
-                self.left_motor_speed = -base_speed
-                self.right_motor_speed = base_speed
-        else:
-            # Move forward
-            self.left_motor_speed = base_speed
-            self.right_motor_speed = base_speed
-
+        # run the control algorithm and update motor speeds
+        # ...
 
 
 
@@ -77,8 +51,7 @@ class DifferentialDriveRobot:
     def sense(self):
         obstacles = self.env.get_obstacles()
         robot_pose = self.get_robot_pose()
-        self.lidar.generate_beam_and_measure(robot_pose, obstacles)
-
+        self.sensor.generate_beam_and_measure(robot_pose, obstacles)
 
     # this is in fact what a robot can predict about its own future position
     def _odometer(self, delta_time):
@@ -127,7 +100,7 @@ class DifferentialDriveRobot:
         pygame.draw.line(surface, (255, 0, 0), (self.x, self.y), (heading_x, heading_y), 5)
 
         # Draw sensor beams
-        # self.lidar.draw(self.get_robot_pose(), surface)
+        self.sensor.draw(self.get_robot_pose(),surface)
 
 
 class RobotPose:
