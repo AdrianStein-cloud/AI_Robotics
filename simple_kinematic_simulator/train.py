@@ -58,6 +58,7 @@ def run_episodes(
     # Stats counters
     success_count = 0
     failure_count = 0
+    collision_count = 0
 
     for ep in range(episodes):
         # Spawn robot at a random, truly collision-free location
@@ -131,6 +132,7 @@ def run_episodes(
             collided = env.check_collision(robot.get_robot_pose(), robot.get_robot_radius())
             new_dist = math.hypot(robot.x - gx, robot.y - gy)
             if collided:
+                collision_count += 1
                 reward, done = -100, True
             elif new_dist < robot.get_robot_radius():
                 reward, done = +10000, True
@@ -194,6 +196,8 @@ def run_episodes(
     # Stats summary
     total = success_count + failure_count
     success_rate = (success_count / total * 100) if total else 0.0
+    agent.success_rate = success_rate
+    agent.collision_count = collision_count
     print(f"Training completed: {success_count} successes, {failure_count} failures ({success_rate:.2f}% success rate)")
 
     if show_visual:
@@ -237,71 +241,82 @@ def train(
     show_visual=False,
     speed_multiplier=1,
     resume=False,
-    resume_path='q_table.pkl'
+    resume_path='q_table.pkl',
+    repeat=1,
 ):
-    """
-    Entry point: runs single or parallel training.
-    Prints overall success rate for single-worker mode.
-    """
+    for i in range(1, repeat+1):
+        """
+        Entry point: runs single or parallel training.
+        Prints overall success rate for single-worker mode.
+        """
 
-    pygame.mixer.init()
-    beep_sound = pygame.mixer.Sound('beep.mp3')
+        pygame.mixer.init()
+        beep_sound = pygame.mixer.Sound('beep.mp3')
 
-    # Ensure visualization uses single worker
-    if show_visual and workers > 1:
-        print("Visualization requires a single worker; forcing workers=1.")
-        workers = 1
+        # Ensure visualization uses single worker
+        if show_visual and workers > 1:
+            print("Visualization requires a single worker; forcing workers=1.")
+            workers = 1
 
-    if workers < 2:
-        agent = run_episodes(
-            episodes,
-            max_steps,
-            dt,
-            max_distance,
-            state_bins,
-            alpha,
-            gamma,
-            epsilon,
-            action_weights,
-            save_interval,
-            show_visual,
-            speed_multiplier,
-            resume,
-            resume_path,
-        )
-        agent.save(resume_path)
-        print(f"Final Q-table saved to {resume_path}")
-        return
+        if workers < 2:
+            agent = run_episodes(
+                episodes,
+                max_steps,
+                dt,
+                max_distance,
+                state_bins,
+                alpha,
+                gamma,
+                epsilon,
+                action_weights,
+                save_interval,
+                show_visual,
+                speed_multiplier,
+                resume,
+                resume_path,
+            )
+            agent.save(resume_path)
+            print(f"Final Q-table saved to {resume_path}")
+            return
 
-    # Parallel execution
-    per_worker = episodes // workers
-    params = []
-    for _ in range(workers):
-        params.append((
-            per_worker,
-            max_steps,
-            dt,
-            max_distance,
-            state_bins,
-            alpha,
-            gamma,
-            epsilon,
-            action_weights,
-            None,      # no periodic save in workers
-            False,     # no visual
-            speed_multiplier,
-            resume,
-            resume_path
-        ))
-    with Pool(workers) as pool:
-        agents = pool.starmap(run_episodes, params)
+        # Parallel execution
+        per_worker = episodes // workers
+        params = []
+        for _ in range(workers):
+            params.append((
+                per_worker,
+                max_steps,
+                dt,
+                max_distance,
+                state_bins,
+                alpha,
+                gamma,
+                epsilon,
+                action_weights,
+                None,      # no periodic save in workers
+                False,     # no visual
+                speed_multiplier,
+                resume,
+                resume_path
+            ))
+        with Pool(workers) as pool:
+            agents = pool.starmap(run_episodes, params)
 
-    # Merge Q-tables
-    q_tables = [agent.q_table for agent in agents]
-    merged = merge_q_tables(q_tables)
-    with open(resume_path, 'wb') as f:
-        pickle.dump(merged, f)
-    print(f"Parallel training done ({workers} workers). Q-table saved to {resume_path}")
+        # Merge Q-tables
+        q_tables = [agent.q_table for agent in agents]
+
+        # Print average success rate
+        sum_of_success_rates = sum(agent.success_rate for agent in agents)
+        avg_success_rate = sum_of_success_rates / workers
+        print(f"Average success rate across {workers} workers: {avg_success_rate:.2f}%")
+
+        total_collisions = sum(agent.collision_count for agent in agents)
+        print(f"Collision count: {total_collisions} ({total_collisions / episodes * 100:.2f}%)")
+
+        merged = merge_q_tables(q_tables)
+        with open(resume_path, 'wb') as f:
+            pickle.dump(merged, f)
+        print(f"Parallel training done ({workers} workers). Q-table saved to {resume_path}. Iteration {i}/{repeat}.")
     beep_sound.play()
     pygame.time.delay(int(beep_sound.get_length() * 1000))
 
@@ -309,7 +324,7 @@ if __name__ == '__main__':
     train(
         episodes=1000,
         workers=12,
-        max_steps=1500,
+        max_steps=2500,
         dt=0.5,
         max_distance=100,
         state_bins=[5,5,5,3],  # sensor bins + closeness bins
@@ -321,5 +336,6 @@ if __name__ == '__main__':
         show_visual=False,
         speed_multiplier=1000,
         resume=True,
-        resume_path='q_table_closeness.pkl'
+        resume_path='q_table_closeness.pkl',
+        repeat=1,
     )

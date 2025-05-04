@@ -14,6 +14,8 @@ class QLearningAgent:
         self.epsilon = epsilon
         self.state_bins = state_bins
         self.q_table = {}  # maps state‐tuple to numpy array of Qs
+        self.success_rate = 0.0
+        self.collision_count = 0
 
     def discretize(self, sensor_readings, max_distance):
         """Convert raw distances into a discrete state tuple."""
