@@ -223,6 +223,7 @@ def run_episodes(
     # Summary
     total = success_count + failure_count
     success_rate = (success_count / total * 100) if total else 0.0
+    agent.success_rate = success_rate
     print(f"Training completed: {success_count} successes, {failure_count} failures ({success_rate:.2f}% success rate)")
 
     if show_visual:
@@ -324,6 +325,12 @@ def train(
 
     # Merge Q-tables
     q_tables = [agent.q_table for agent in agents]
+
+    # Print average success rate
+    sum_of_success_rates = sum(agent.success_rate for agent in agents)
+    avg_success_rate = sum_of_success_rates / workers
+    print(f"Average success rate across {workers} workers: {avg_success_rate:.2f}%")
+
     merged = merge_q_tables(q_tables)
     with open(resume_path, 'wb') as f:
         pickle.dump(merged, f)
@@ -333,18 +340,18 @@ def train(
 
 if __name__ == '__main__':
     train(
-        episodes=10,
-        workers=1,
+        episodes=100,
+        workers=12,
         max_steps=1000,
         dt=0.5,
         max_distance=100,
         state_bins=[5, 5, 5, 4],
-        alpha=0.1,
+        alpha=0.2,
         gamma=0.95,
         epsilon=0.2,
         action_weights=[0.1, 0.1, 0.8],
         save_interval=None,
-        show_visual=True,
+        show_visual=False,
         speed_multiplier=1000,
         resume=True,
         resume_path='q_table_direction.pkl'
