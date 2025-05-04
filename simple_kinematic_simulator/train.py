@@ -307,7 +307,7 @@ def train(
 
 if __name__ == '__main__':
     train(
-        episodes=2000,
+        episodes=1000,
         workers=12,
         max_steps=1500,
         dt=0.5,
@@ -315,7 +315,7 @@ if __name__ == '__main__':
         state_bins=[5,5,5,3],  # sensor bins + closeness bins
         alpha=0.2,
         gamma=0.95,
-        epsilon=0.3,
+        epsilon=0.0,
         action_weights=[0.1,0.1,0.8],
         save_interval=None,
         show_visual=False,
