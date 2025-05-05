@@ -333,7 +333,7 @@ if __name__ == '__main__':
         epsilon=0.0,
         action_weights=[0.1,0.1,0.8],
         save_interval=None,
-        show_visual=False,
+        show_visual=True,
         speed_multiplier=1000,
         resume=True,
         resume_path='q_table_closeness.pkl',
