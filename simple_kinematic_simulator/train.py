@@ -324,7 +324,7 @@ if __name__ == '__main__':
     train(
         episodes=1000,
         workers=12,
-        max_steps=2500,
+        max_steps=1000,
         dt=0.5,
         max_distance=100,
         state_bins=[5,5,5,3],  # sensor bins + closeness bins
